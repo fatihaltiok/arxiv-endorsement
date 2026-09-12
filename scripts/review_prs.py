@@ -15,6 +15,7 @@ import argparse
 import base64
 import importlib.util
 import json
+import re
 import subprocess
 import sys
 import tempfile
@@ -107,8 +108,20 @@ def format_messages(messages: list[dict]) -> str:
     return "\n\n".join(f"{m['role'].upper()}:\n{m['content']}" for m in messages)
 
 
+_ANSI_ESCAPE = re.compile(r"\x1b\[[0-9;]*m")
+
+
+def strip_ansi(text: str) -> str:
+    """Remove ANSI color codes from agentknit console output."""
+    return _ANSI_ESCAPE.sub("", text)
+
+
 def agent_completion(payload: dict, agent_script: Path, model_name: str) -> dict:
-    """Complete a payload through an agentknit agent (task on stdin, JSON on stdout)."""
+    """Complete a payload through an agentknit agent (task on stdin, JSON on stdout).
+
+    Agentknit prints token-budget noise around the answer, so the JSON object is
+    located and parsed here rather than assuming the whole stdout is JSON.
+    """
     global _LAST_MODEL
     if not agent_script.exists():
         raise RuntimeError(f"agent script not found: {agent_script}")
@@ -124,10 +137,16 @@ def agent_completion(payload: dict, agent_script: Path, model_name: str) -> dict
     )
     if proc.returncode != 0:
         raise RuntimeError(f"{agent_script.name}: {(proc.stderr or proc.stdout).strip()[:500]}")
+    try:
+        check_paper.extract_json_object(strip_ansi(proc.stdout))
+    except (ValueError, KeyError) as e:
+        raise RuntimeError(
+            f"{agent_script.name}: could not parse JSON from agent output: {e}"
+        ) from e
     _LAST_MODEL = model_name
     if _LAST_MODEL not in _MODELS_USED:
         _MODELS_USED.append(_LAST_MODEL)
-    return {"choices": [{"message": {"role": "assistant", "content": proc.stdout.strip()}}]}
+    return {"choices": [{"message": {"role": "assistant", "content": strip_ansi(proc.stdout).strip()}}]}
 
 
 def make_completion(agent: str):

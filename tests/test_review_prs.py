@@ -137,6 +137,43 @@ def test_agent_completion_wraps_stdout_as_openai_response(monkeypatch, tmp_path)
     assert "kimi-k3 (agentknit)" in review_prs._MODELS_USED
 
 
+def test_agent_completion_tolerates_agentknit_console_noise(monkeypatch, tmp_path):
+    script = tmp_path / "agent-kimi-k3.py"
+    script.write_text("")
+
+    class Proc:
+        returncode = 0
+        stdout = (
+            "\x1b[2m\x1b[35m[budget] 1,047,136/1,048,576 tokens remaining\x1b[0m\n"
+            "\x1b[2m\x1b[35m[tokens] prompt 1,440\x1b[0m\n\n"
+            "I'll evaluate the paper now.\n"
+            '{"overall_verdict": true}\n'
+            "\x1b[2m\x1b[35m[session tokens] prompt 1,440\x1b[0m\n"
+        )
+        stderr = ""
+
+    monkeypatch.setattr(review_prs.subprocess, "run", lambda *a, **k: Proc())
+    response = review_prs.agent_completion(
+        {"messages": [{"role": "user", "content": "hi"}]}, script, "kimi-k3 (agentknit)"
+    )
+    parsed = review_prs.check_paper.parse_evaluation_response(response)
+    assert parsed == {"overall_verdict": True}
+
+
+def test_agent_completion_raises_when_no_json_in_output(monkeypatch, tmp_path):
+    script = tmp_path / "agent-kimi-k3.py"
+    script.write_text("")
+
+    class Proc:
+        returncode = 0
+        stdout = "The agent chatted but produced no JSON.\n"
+        stderr = ""
+
+    monkeypatch.setattr(review_prs.subprocess, "run", lambda *a, **k: Proc())
+    with pytest.raises(RuntimeError, match="could not parse JSON"):
+        review_prs.agent_completion({"messages": []}, script, "kimi-k3 (agentknit)")
+
+
 def test_agent_completion_raises_on_nonzero_exit(monkeypatch, tmp_path):
     script = tmp_path / "agent-kimi-k3.py"
     script.write_text("")

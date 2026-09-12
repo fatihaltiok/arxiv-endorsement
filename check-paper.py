@@ -183,15 +183,28 @@ def build_evaluation_payload(text: str) -> dict:
     }
 
 
-def parse_evaluation_response(response: dict) -> dict:
-    """Extract the JSON verdict from an OpenAI-compatible completion response."""
-    raw = (response["choices"][0]["message"]["content"] or "").strip()
-    # Strip accidental markdown fences if the model adds them
+def extract_json_object(raw: str) -> dict:
+    """Extract the first JSON object from raw text, tolerating chatter and fences."""
+    raw = raw.strip()
     if raw.startswith("```"):
         raw = raw.split("```")[1]
         if raw.startswith("json"):
             raw = raw[4:]
-    return json.loads(raw)
+        raw = raw.strip()
+    if raw.startswith("{"):
+        return json.loads(raw)
+    # Agent backends prepend/append chatter around the JSON; locate the object.
+    start = raw.find("{")
+    end = raw.rfind("}")
+    if start != -1 and end > start:
+        return json.loads(raw[start : end + 1])
+    raise ValueError(f"no JSON object found in response: {raw[:200]!r}")
+
+
+def parse_evaluation_response(response: dict) -> dict:
+    """Extract the JSON verdict from an OpenAI-compatible completion response."""
+    raw = (response["choices"][0]["message"]["content"] or "").strip()
+    return extract_json_object(raw)
 
 
 GATES = [

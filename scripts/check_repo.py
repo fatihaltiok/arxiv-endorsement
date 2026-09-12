@@ -358,11 +358,10 @@ def _parse_json_response(response: dict) -> dict:
             f"empty completion (finish_reason={choice.get('finish_reason')}, "
             f"usage={response.get('usage')}) — raise MAX_TOKENS"
         )
-    if raw.startswith("```"):
-        raw = raw.split("```")[1]
-        if raw.startswith("json"):
-            raw = raw[4:]
-    return json.loads(raw)
+    # Agent backends wrap the JSON in console chatter; extract_json_object
+    # tolerates it. Loaded lazily to keep the module importable standalone.
+    check_paper = _load_module(ROOT / "check-paper.py", "check_paper")
+    return check_paper.extract_json_object(raw)
 
 
 def parse_claims_response(response: dict) -> list[dict]:
