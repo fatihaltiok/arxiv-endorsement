@@ -99,6 +99,73 @@ def test_completion_raises_when_every_backend_fails(monkeypatch, tmp_path):
         review_prs.best_effort_completion({"messages": []})
 
 
+def test_format_messages_flattens_roles_and_content():
+    payload = {
+        "messages": [
+            {"role": "system", "content": "be strict"},
+            {"role": "user", "content": "evaluate this"},
+        ]
+    }
+    assert review_prs.format_messages(payload["messages"]) == "SYSTEM:\nbe strict\n\nUSER:\nevaluate this"
+
+
+def test_agent_completion_wraps_stdout_as_openai_response(monkeypatch, tmp_path):
+    script = tmp_path / "agent-kimi-k3.py"
+    script.write_text("")
+    seen: dict = {}
+
+    class Proc:
+        returncode = 0
+        stdout = '{"overall_verdict": true}\n'
+        stderr = ""
+
+    def fake_run(cmd, **kwargs):
+        seen["cmd"] = cmd
+        seen["input"] = kwargs["input"]
+        return Proc()
+
+    monkeypatch.setattr(review_prs.subprocess, "run", fake_run)
+    review_prs._MODELS_USED.clear()
+    response = review_prs.agent_completion(
+        {"messages": [{"role": "user", "content": "hi"}]}, script, "kimi-k3 (agentknit)"
+    )
+    assert seen["cmd"] == [review_prs.sys.executable, str(script), "--non-interactive"]
+    assert "USER:\nhi" in seen["input"]
+    assert "ONLY the requested JSON" in seen["input"]
+    assert response["choices"][0]["message"]["content"] == '{"overall_verdict": true}'
+    assert review_prs._LAST_MODEL == "kimi-k3 (agentknit)"
+    assert "kimi-k3 (agentknit)" in review_prs._MODELS_USED
+
+
+def test_agent_completion_raises_on_nonzero_exit(monkeypatch, tmp_path):
+    script = tmp_path / "agent-kimi-k3.py"
+    script.write_text("")
+
+    class Proc:
+        returncode = 1
+        stdout = ""
+        stderr = "boom"
+
+    monkeypatch.setattr(review_prs.subprocess, "run", lambda *a, **k: Proc())
+    with pytest.raises(RuntimeError, match="boom"):
+        review_prs.agent_completion({"messages": []}, script, "kimi-k3 (agentknit)")
+
+
+def test_agent_completion_raises_when_script_missing(tmp_path):
+    with pytest.raises(RuntimeError, match="agent script not found"):
+        review_prs.agent_completion({"messages": []}, tmp_path / "nope.py", "x")
+
+
+def test_make_completion_defaults_to_claude_backends():
+    assert review_prs.make_completion("claude") is review_prs.best_effort_completion
+
+
+def test_make_completion_returns_agent_lambda():
+    complete = review_prs.make_completion("kimi-k3")
+    assert complete is not review_prs.best_effort_completion
+    assert callable(complete)
+
+
 def test_other_validation_errors_leave_the_pr_open(stubbed, monkeypatch):
     monkeypatch.setattr(review_prs, "fetch_file_content", lambda repo, path, ref: MALFORMED)
     review_prs.process_pr("owner/repo", PR, dry_run=False, update=False)

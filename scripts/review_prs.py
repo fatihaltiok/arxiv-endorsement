@@ -6,7 +6,7 @@ Skips PRs that already carry a check comment (idempotent). A request for a subje
 than cs.SE is answered and closed.
 
 Usage:
-  ./scripts/review_prs.py [--repo owner/repo] [--dry-run] [--pr N]
+  ./scripts/review_prs.py [--repo owner/repo] [--dry-run] [--pr N] [--agent claude|kimi-k3]
 """
 
 from __future__ import annotations
@@ -32,6 +32,18 @@ COMPLETION_BACKENDS = (
     Path.home() / "bin" / "claude-sonnet-5-completions.py",
     Path.home() / "bin" / "best-effort-completions.py",
 )
+# Agent launchers (agentknit one-shot tasks on stdin). Each maps to a model name
+# reported in the posted check comment.
+AGENT_SCRIPTS = {
+    "kimi-k3": Path.home() / "bin" / "agent-kimi-k3.py",
+}
+AGENT_MODEL_NAMES = {
+    "kimi-k3": "kimi-k3 (agentknit)",
+}
+AGENT_CHOICES = ("claude", *AGENT_SCRIPTS)
+DEFAULT_AGENT = "claude"
+# Agents reason before answering and may be slow on a large paper.
+AGENT_TIMEOUT_SECONDS = 1800
 
 
 def load_module(path: Path, name: str):
@@ -90,6 +102,43 @@ _LAST_MODEL = "unknown"
 _MODELS_USED: list[str] = []
 
 
+def format_messages(messages: list[dict]) -> str:
+    """Flatten OpenAI-style messages into a single prompt string."""
+    return "\n\n".join(f"{m['role'].upper()}:\n{m['content']}" for m in messages)
+
+
+def agent_completion(payload: dict, agent_script: Path, model_name: str) -> dict:
+    """Complete a payload through an agentknit agent (task on stdin, JSON on stdout)."""
+    global _LAST_MODEL
+    if not agent_script.exists():
+        raise RuntimeError(f"agent script not found: {agent_script}")
+    proc = subprocess.run(
+        [sys.executable, str(agent_script), "--non-interactive"],
+        input=(
+            format_messages(payload["messages"])
+            + "\n\nRespond with ONLY the requested JSON object, no markdown fences, no extra text."
+        ),
+        capture_output=True,
+        text=True,
+        timeout=AGENT_TIMEOUT_SECONDS,
+    )
+    if proc.returncode != 0:
+        raise RuntimeError(f"{agent_script.name}: {(proc.stderr or proc.stdout).strip()[:500]}")
+    _LAST_MODEL = model_name
+    if _LAST_MODEL not in _MODELS_USED:
+        _MODELS_USED.append(_LAST_MODEL)
+    return {"choices": [{"message": {"role": "assistant", "content": proc.stdout.strip()}}]}
+
+
+def make_completion(agent: str):
+    """Return the completion function for the chosen agent."""
+    if agent == DEFAULT_AGENT:
+        return best_effort_completion
+    script = AGENT_SCRIPTS[agent]
+    model_name = AGENT_MODEL_NAMES[agent]
+    return lambda payload: agent_completion(payload, script, model_name)
+
+
 def best_effort_completion(payload: dict) -> dict:
     """Complete a payload with the first backend that answers, Sonnet 5 first."""
     global _LAST_MODEL
@@ -116,9 +165,9 @@ def best_effort_completion(payload: dict) -> dict:
     raise RuntimeError("no completion backend succeeded: " + "; ".join(errors))
 
 
-def evaluate_paper(text: str) -> tuple[dict, str]:
+def evaluate_paper(text: str, complete=best_effort_completion) -> tuple[dict, str]:
     """Evaluate the paper gates and report which model actually answered."""
-    response = best_effort_completion(check_paper.build_evaluation_payload(text))
+    response = complete(check_paper.build_evaluation_payload(text))
     return check_paper.parse_evaluation_response(response), _LAST_MODEL
 
 
@@ -193,6 +242,7 @@ def post_comment(repo: str, pr_number: int, body: str) -> None:
 def process_pr(
     repo: str, pr: dict, dry_run: bool, update: bool,
     skip_repo: bool = False, threshold: float = check_repo.DEFAULT_TRACEABILITY_THRESHOLD,
+    complete=best_effort_completion,
 ) -> None:
     number = pr["number"]
     txt_files = [f["path"] for f in pr["files"] if f["path"].startswith("requests/") and f["path"].endswith(".txt")]
@@ -246,7 +296,7 @@ def process_pr(
     _MODELS_USED.clear()
     try:
         text = check_paper.pdf_to_text(str(tmp_pdf))
-        result, _ = evaluate_paper(text)
+        result, _ = evaluate_paper(text, complete)
     except Exception as e:
         print(f"PR #{number}: evaluation failed: {e}", file=sys.stderr)
         return
@@ -257,7 +307,7 @@ def process_pr(
     if repo_url and not skip_repo:
         print(f"PR #{number}: checking repository {repo_url} …", file=sys.stderr)
         try:
-            repo_result = check_repo.check_repo(repo_url, text, best_effort_completion, threshold)
+            repo_result = check_repo.check_repo(repo_url, text, complete, threshold)
         except Exception as e:
             print(f"PR #{number}: repository check failed: {e}", file=sys.stderr)
 
@@ -282,7 +332,15 @@ def main() -> None:
         default=check_repo.DEFAULT_TRACEABILITY_THRESHOLD,
         help="fraction of the paper's empirical numbers that must be backed by the repository",
     )
+    parser.add_argument(
+        "--agent",
+        choices=AGENT_CHOICES,
+        default=DEFAULT_AGENT,
+        help="which agent evaluates the paper (default: %(default)s)",
+    )
     args = parser.parse_args()
+
+    complete = make_completion(args.agent)
 
     for pr in list_open_prs(args.repo):
         if args.pr and pr["number"] not in args.pr:
@@ -290,6 +348,7 @@ def main() -> None:
         process_pr(
             args.repo, pr, args.dry_run, args.update,
             skip_repo=args.no_repo_check, threshold=args.traceability_threshold,
+            complete=complete,
         )
 
 
