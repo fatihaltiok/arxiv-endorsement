@@ -39,7 +39,7 @@ AGENT_SCRIPTS = {
     "kimi-k3": Path.home() / "bin" / "agent-kimi-k3.py",
 }
 AGENT_MODEL_NAMES = {
-    "kimi-k3": "kimi-k3 (agentknit)",
+    "kimi-k3": "kimi-k3 ([agentknit](https://github.com/monperrus/agentknit))",
 }
 AGENT_CHOICES = ("claude", *AGENT_SCRIPTS)
 DEFAULT_AGENT = "claude"
