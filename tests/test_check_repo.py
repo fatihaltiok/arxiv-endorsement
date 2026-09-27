@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib.util
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -140,7 +141,13 @@ def test_check_repo_end_to_end_with_stubbed_llm(fake_repo: Path, monkeypatch):
     import shutil
 
     def fake_clone(url: str, dest: Path):
-        shutil.copytree(fake_repo, dest)
+        shutil.copytree(fake_repo, dest, ignore=shutil.ignore_patterns(".git"))
+        subprocess.run(["git", "init", "--quiet"], cwd=dest, check=True)
+        subprocess.run(["git", "add", "-A"], cwd=dest, check=True)
+        subprocess.run(
+            ["git", "-c", "user.email=t@t.com", "-c", "user.name=t", "commit", "--quiet", "-m", "init"],
+            cwd=dest, check=True,
+        )
         return True, "cloned"
 
     monkeypatch.setattr(check_repo, "clone_repo", fake_clone)
@@ -166,6 +173,7 @@ def test_check_repo_end_to_end_with_stubbed_llm(fake_repo: Path, monkeypatch):
 
     result = check_repo.check_repo("https://github.com/owner/repo", "paper text", fake_complete)
     assert result["repo_accessible"] is True
+    assert len(result["commit_sha"]) == 40
     assert (result["n_backed"], result["n_claims"]) == (1, 2)
     assert result["verdict"] is False  # 50% < 80% threshold
     assert "1/2 empirical numbers" in result["feedback"]

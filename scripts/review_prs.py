@@ -215,12 +215,16 @@ def build_comment(
         overall = overall and repo_result["verdict"]
     overall_str = "✓ SUITABLE for arXiv cs.SE endorsement" if overall else "✗ NOT suitable for arXiv cs.SE endorsement"
 
+    repo_line = f"Repo: {repo_url}"
+    if repo_result is not None and repo_result.get("commit_sha"):
+        repo_line += f" @ `{repo_result['commit_sha']}`"
+
     lines = [
         COMMENT_MARKER,
         "## arXiv SE endorsement check (automated)",
         "",
         f"Paper: {paper_url}",
-        f"Repo: {repo_url}",
+        repo_line,
         f"Model: {model}",
         f"SHA-256: `{checksum}`",
         "",

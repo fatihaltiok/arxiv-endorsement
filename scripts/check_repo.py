@@ -222,6 +222,15 @@ def clone_repo(repo_url: str, dest: Path) -> tuple[bool, str]:
     return True, "cloned"
 
 
+def head_commit_sha(clone_dir: Path) -> str:
+    """SHA of the cloned repo's HEAD commit."""
+    proc = subprocess.run(
+        ["git", "-C", str(clone_dir), "rev-parse", "HEAD"],
+        capture_output=True, text=True, check=True,
+    )
+    return proc.stdout.strip()
+
+
 def iter_repo_files(root: Path):
     for path in sorted(root.rglob("*")):
         if not path.is_file() or path.is_symlink():
@@ -459,6 +468,7 @@ def check_repo(
             return result
 
         result["repo_accessible"] = True
+        result["commit_sha"] = head_commit_sha(clone_dir)
         inventory = build_inventory(clone_dir)
         result["inventory"] = {k: inventory[k] for k in ("n_scripts", "n_data", "has_license")}
         result["inventory"]["n_files"] = len(inventory["files"])

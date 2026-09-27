@@ -209,3 +209,30 @@ def test_other_validation_errors_leave_the_pr_open(stubbed, monkeypatch):
     review_prs.process_pr("owner/repo", PR, dry_run=False, update=False)
     assert stubbed["closed"] == []
     assert stubbed["comments"] == []
+
+
+def _gate_result(verdict: bool = True) -> dict:
+    return {
+        key: {"verdict": verdict, "confidence": "high", "feedback": ""}
+        for key, _ in review_prs.check_paper.GATES
+    }
+
+
+def test_build_comment_includes_the_repo_commit_sha():
+    result = _gate_result()
+    result["summary"] = ""
+    repo_result = {"verdict": True, "confidence": "high", "commit_sha": "abc1234def5678901234567890123456789abcd"}
+    comment = review_prs.build_comment(
+        result, "https://arxiv.org/abs/1", "https://github.com/owner/repo", "model", "checksum", repo_result,
+    )
+    assert "Repo: https://github.com/owner/repo @ `abc1234def5678901234567890123456789abcd`" in comment
+
+
+def test_build_comment_omits_commit_sha_when_absent():
+    result = _gate_result()
+    result["summary"] = ""
+    comment = review_prs.build_comment(
+        result, "https://arxiv.org/abs/1", "https://github.com/owner/repo", "model", "checksum", None,
+    )
+    assert "Repo: https://github.com/owner/repo\n" in comment
+    assert "@" not in comment
