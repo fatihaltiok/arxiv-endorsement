@@ -1,0 +1,5 @@
+LinkedIn: https://www.linkedin.com/in/earino
+Paper: https://github.com/earino/identical-runs-different-results/raw/main/paper/identical-runs-different-results.pdf
+Repo: https://github.com/earino/identical-runs-different-results
+Subject: cs.SE
+EndorsementCode: L9IUWJ
