@@ -30,6 +30,7 @@ def stubbed(monkeypatch):
     calls: dict[str, list] = {"comments": [], "closed": [], "commented_markers": []}
     monkeypatch.setattr(review_prs, "post_comment", lambda repo, n, body: calls["comments"].append((n, body)))
     monkeypatch.setattr(review_prs, "already_commented", lambda repo, n, marker=review_prs.COMMENT_MARKER: False)
+    monkeypatch.setattr(review_prs, "find_comment", lambda repo, n, marker=review_prs.COMMENT_MARKER: None)
 
     def fake_close(repo, n, body):
         calls["comments"].append((n, body))

@@ -84,6 +84,14 @@ def already_commented(repo: str, pr_number: int, marker: str = COMMENT_MARKER) -
     return any(marker in c.get("body", "") for c in comments)
 
 
+def find_comment(repo: str, pr_number: int, marker: str = COMMENT_MARKER) -> dict | None:
+    comments = gh_json("pr", "view", str(pr_number), "--repo", repo, "--json", "comments")["comments"]
+    for c in comments:
+        if marker in c.get("body", ""):
+            return c
+    return None
+
+
 def close_pr(repo: str, pr_number: int, body: str) -> None:
     post_comment(repo, pr_number, body)
     subprocess.run(["gh", "pr", "close", str(pr_number), "--repo", repo], check=True)
@@ -258,6 +266,20 @@ def post_comment(repo: str, pr_number: int, body: str) -> None:
         Path(body_path).unlink(missing_ok=True)
 
 
+def edit_comment(repo: str, comment_id: str, body: str) -> None:
+    with tempfile.NamedTemporaryFile("w", suffix=".md", delete=False) as f:
+        f.write(body)
+        body_path = f.name
+    try:
+        subprocess.run(
+            ["gh", "api", "--method", "PATCH", f"repos/{repo}/issues/comments/{comment_id}",
+             "-F", f"body=@{body_path}"],
+            check=True, capture_output=True, text=True,
+        )
+    finally:
+        Path(body_path).unlink(missing_ok=True)
+
+
 def process_pr(
     repo: str, pr: dict, dry_run: bool, update: bool,
     skip_repo: bool = False, threshold: float = check_repo.DEFAULT_TRACEABILITY_THRESHOLD,
@@ -268,8 +290,8 @@ def process_pr(
     if not txt_files:
         return
 
-    was_commented = already_commented(repo, number)
-    if was_commented and not update:
+    existing_comment = find_comment(repo, number)
+    if existing_comment and not update:
         print(f"PR #{number}: already checked, skipping", file=sys.stderr)
         return
 
@@ -333,6 +355,10 @@ def process_pr(
     comment = build_comment(result, paper_url, repo_label, ", ".join(_MODELS_USED) or "unknown", checksum, repo_result)
     if dry_run:
         print(f"\n--- PR #{number} (dry run, not posted) ---\n{comment}\n")
+    elif existing_comment:
+        comment_id = existing_comment["url"].rsplit("-", 1)[-1]
+        edit_comment(repo, comment_id, comment)
+        print(f"PR #{number}: comment updated", file=sys.stderr)
     else:
         post_comment(repo, number, comment)
         print(f"PR #{number}: comment posted", file=sys.stderr)
@@ -342,7 +368,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--repo", default=DEFAULT_REPO)
     parser.add_argument("--dry-run", action="store_true", help="print comments instead of posting them")
-    parser.add_argument("--update", action="store_true", help="re-run already-checked PRs and post a new check comment (does not edit prior comments)")
+    parser.add_argument("--update", action="store_true", help="re-run already-checked PRs and edit the existing check comment in place")
     parser.add_argument("--pr", type=int, action="append", help="only process these PR numbers (repeatable)")
     parser.add_argument("--no-repo-check", action="store_true", help="skip gate 4 (open science repository)")
     parser.add_argument(
